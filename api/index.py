@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import requests
+from curl_cffi import requests # Используем специальную библиотеку
 import json
 
 app = Flask(__name__)
@@ -7,20 +7,26 @@ app = Flask(__name__)
 @app.route('/api/msc', methods=['GET'])
 def get_msc_data():
     container = request.args.get('container')
-    target_port = request.args.get('port') # Ожидаем DCT или BCT
+    target_port = request.args.get('port')
 
     if not container:
         return jsonify({"error": "No container number provided"}), 400
 
     url = "https://www.msc.com/api/feature/tools/TrackingInfo"
     
-    # Заголовки, максимально похожие на браузер
+    # Заголовки как у реального Chrome
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Content-Type": "application/json",
         "Referer": "https://www.msc.com/en/track-a-shipment",
         "Origin": "https://www.msc.com",
-        "Accept": "application/json, text/plain, */*"
+        "Accept": "application/json, text/plain, */*",
+        "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin"
     }
 
     payload = {
@@ -29,17 +35,27 @@ def get_msc_data():
     }
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        # ВАЖНО: параметр impersonate="chrome120" маскирует нас под Chrome
+        response = requests.post(
+            url, 
+            json=payload, 
+            headers=headers, 
+            impersonate="chrome120", 
+            timeout=15
+        )
         
         if response.status_code != 200:
-            return jsonify({"error": f"MSC API Error: {response.status_code}"}), 502
+            return jsonify({
+                "error": f"MSC API Error: {response.status_code}", 
+                "body_preview": response.text[:200]
+            }), 502
 
         data = response.json()
 
         if not data.get("IsSuccess"):
-             return jsonify({"error": "MSC returned fail status"}), 404
+             return jsonify({"error": "MSC returned fail status (IsSuccess: false)"}), 404
 
-        # Парсинг
+        # --- Логика парсинга (без изменений) ---
         events_found = []
         bill_of_ladings = data.get("Data", {}).get("BillOfLadings", [])
         
@@ -53,12 +69,10 @@ def get_msc_data():
         if not events_found:
              return jsonify({"error": "No events found"}), 404
 
-        # Берем самый первый ивент (Order 5 в примере - это новейший)
         latest_event = events_found[0]
         event_date = latest_event.get("Date")
         event_loc = latest_event.get("Location", "").upper()
 
-        # Логика сравнения
         status = "Mismatch"
         match_city = ""
         
@@ -77,12 +91,8 @@ def get_msc_data():
             "date": event_date,
             "location": event_loc,
             "status": status,
-            "target_check": match_city
+            "match_check": match_city
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-# Для локального теста
-if __name__ == '__main__':
-    app.run(debug=True)
