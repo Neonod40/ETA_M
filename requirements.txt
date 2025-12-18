@@ -1,2 +1,2 @@
 flask
-requests
+curl_cffi
