@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from curl_cffi import requests # Используем специальную библиотеку
+from curl_cffi import requests
 import json
 
 app = Flask(__name__)
@@ -14,7 +14,6 @@ def get_msc_data():
 
     url = "https://www.msc.com/api/feature/tools/TrackingInfo"
     
-    # Заголовки как у реального Chrome
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Content-Type": "application/json",
@@ -35,7 +34,7 @@ def get_msc_data():
     }
 
     try:
-        # ВАЖНО: параметр impersonate="chrome120" маскирует нас под Chrome
+        # Используем impersonate, чтобы притвориться хромом
         response = requests.post(
             url, 
             json=payload, 
@@ -44,21 +43,49 @@ def get_msc_data():
             timeout=15
         )
         
+        # 1. Если статус не 200, сразу возвращаем ошибку с телом ответа
         if response.status_code != 200:
             return jsonify({
-                "error": f"MSC API Error: {response.status_code}", 
-                "body_preview": response.text[:200]
+                "error": f"MSC HTTP Error: {response.status_code}", 
+                "raw_response": response.text[:500] # Показываем первые 500 символов
             }), 502
 
-        data = response.json()
+        # 2. Пытаемся получить JSON
+        try:
+            data = response.json()
+        except Exception:
+            # Если вернулся HTML (например, страница Cloudflare)
+            return jsonify({
+                "error": "Response is not JSON (likely HTML blockage)", 
+                "raw_response": response.text[:500]
+            }), 502
+
+        # 3. ИСПРАВЛЕНИЕ ВАШЕЙ ОШИБКИ
+        # Если data - это строка, попробуем распаковать её еще раз
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except:
+                # Если это просто текст, возвращаем его как ошибку
+                return jsonify({
+                    "error": "MSC returned a string, not an object",
+                    "content": data
+                }), 404
+
+        # Теперь data точно словарь (dict), можно делать .get()
+        if not isinstance(data, dict):
+             return jsonify({"error": "Parsed data is still not a dictionary", "type": str(type(data))}), 500
 
         if not data.get("IsSuccess"):
-             return jsonify({"error": "MSC returned fail status (IsSuccess: false)"}), 404
+             return jsonify({"error": "MSC logic fail (IsSuccess: false)", "data": data}), 404
 
-        # --- Логика парсинга (без изменений) ---
+        # --- Парсинг ---
         events_found = []
         bill_of_ladings = data.get("Data", {}).get("BillOfLadings", [])
         
+        if not bill_of_ladings:
+             return jsonify({"error": "No BillOfLadings found", "full_data": data}), 404
+
         for bl in bill_of_ladings:
             containers = bl.get("ContainersInfo", [])
             for c in containers:
@@ -67,7 +94,7 @@ def get_msc_data():
                     break
         
         if not events_found:
-             return jsonify({"error": "No events found"}), 404
+             return jsonify({"error": "No events found for this container"}), 404
 
         latest_event = events_found[0]
         event_date = latest_event.get("Date")
@@ -91,8 +118,8 @@ def get_msc_data():
             "date": event_date,
             "location": event_loc,
             "status": status,
-            "match_check": match_city
+            "debug_match": match_city
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Critical Script Error", "details": str(e)}), 500
