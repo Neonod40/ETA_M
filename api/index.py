@@ -7,34 +7,25 @@ app = Flask(__name__)
 @app.route('/api/msc', methods=['GET'])
 def get_msc_data():
     container = request.args.get('container')
-    target_port = request.args.get('port')
-
-    if not container:
-        return jsonify({"error": "No container number provided"}), 400
-
+    # Параметры из вашего примера
     url = "https://www.msc.com/api/feature/tools/TrackingInfo"
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Content-Type": "application/json",
-        "Referer": "https://www.msc.com/en/track-a-shipment",
-        "Origin": "https://www.msc.com",
-        "Accept": "application/json, text/plain, */*",
-        "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin"
-    }
-
     payload = {
-        "trackingNumber": container,
+        "trackingNumber": str(container).strip() if container else "MSDU2867686",
         "trackingMode": "0"
     }
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.msc.com/en/track-a-shipment",
+        "Origin": "https://www.msc.com",
+        "X-Requested-With": "XMLHttpRequest"
+    }
+
     try:
-        # Используем impersonate, чтобы притвориться хромом
+        # Делаем запрос с имитацией браузера
         response = requests.post(
             url, 
             json=payload, 
@@ -42,84 +33,24 @@ def get_msc_data():
             impersonate="chrome120", 
             timeout=15
         )
-        
-        # 1. Если статус не 200, сразу возвращаем ошибку с телом ответа
-        if response.status_code != 200:
-            return jsonify({
-                "error": f"MSC HTTP Error: {response.status_code}", 
-                "raw_response": response.text[:500] # Показываем первые 500 символов
-            }), 502
 
-        # 2. Пытаемся получить JSON
+        # Собираем диагностические данные
+        debug_info = {
+            "status_code": response.status_code,
+            "response_headers": dict(response.headers),
+            "raw_body": response.text # ВОТ ТУТ ВЕСЬ ТЕКСТ ОТВЕТА
+        }
+
+        # Пытаемся проверить, не JSON ли это в виде строки
         try:
-            data = response.json()
-        except Exception:
-            # Если вернулся HTML (например, страница Cloudflare)
-            return jsonify({
-                "error": "Response is not JSON (likely HTML blockage)", 
-                "raw_response": response.text[:500]
-            }), 502
+            parsed_json = response.json()
+            if isinstance(parsed_json, str):
+                parsed_json = json.loads(parsed_json)
+            debug_info["parsed_json"] = parsed_json
+        except:
+            debug_info["parsed_json"] = "Could not parse as JSON"
 
-        # 3. ИСПРАВЛЕНИЕ ВАШЕЙ ОШИБКИ
-        # Если data - это строка, попробуем распаковать её еще раз
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except:
-                # Если это просто текст, возвращаем его как ошибку
-                return jsonify({
-                    "error": "MSC returned a string, not an object",
-                    "content": data
-                }), 404
-
-        # Теперь data точно словарь (dict), можно делать .get()
-        if not isinstance(data, dict):
-             return jsonify({"error": "Parsed data is still not a dictionary", "type": str(type(data))}), 500
-
-        if not data.get("IsSuccess"):
-             return jsonify({"error": "MSC logic fail (IsSuccess: false)", "data": data}), 404
-
-        # --- Парсинг ---
-        events_found = []
-        bill_of_ladings = data.get("Data", {}).get("BillOfLadings", [])
-        
-        if not bill_of_ladings:
-             return jsonify({"error": "No BillOfLadings found", "full_data": data}), 404
-
-        for bl in bill_of_ladings:
-            containers = bl.get("ContainersInfo", [])
-            for c in containers:
-                if c.get("ContainerNumber") == container:
-                    events_found = c.get("Events", [])
-                    break
-        
-        if not events_found:
-             return jsonify({"error": "No events found for this container"}), 404
-
-        latest_event = events_found[0]
-        event_date = latest_event.get("Date")
-        event_loc = latest_event.get("Location", "").upper()
-
-        status = "Mismatch"
-        match_city = ""
-        
-        if target_port == "DCT":
-            match_city = "GDANSK"
-        elif target_port == "BCT":
-            match_city = "GDYNIA"
-            
-        if match_city and match_city in event_loc:
-            status = "OK"
-        elif not target_port:
-            status = "No Target Port"
-        
-        return jsonify({
-            "container": container,
-            "date": event_date,
-            "location": event_loc,
-            "status": status,
-            "debug_match": match_city
-        })
+        return jsonify(debug_info)
 
     except Exception as e:
-        return jsonify({"error": "Critical Script Error", "details": str(e)}), 500
+        return jsonify({"critical_error": str(e)})
