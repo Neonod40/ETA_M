@@ -7,7 +7,7 @@ app = Flask(__name__)
 @app.route('/api/msc', methods=['GET'])
 def get_msc_data():
     container = request.args.get('container')
-    target_port = request.args.get('port') # Ожидаем "DCT" или "BCT"
+    target_port = request.args.get('port') # "DCT" или "BCT"
 
     if not container:
         return jsonify({"error": "No container number provided"}), 400
@@ -28,7 +28,6 @@ def get_msc_data():
         if response.status_code != 200:
             return jsonify({"error": f"HTTP {response.status_code}"}), 502
 
-        # Распаковка "двойного" JSON (так как MSC шлет строку в ответе)
         res_data = response.json()
         if isinstance(res_data, str):
             res_data = json.loads(res_data)
@@ -36,38 +35,51 @@ def get_msc_data():
         if not res_data.get("IsSuccess"):
             return jsonify({"error": "Not found"}), 404
 
-        # Ищем события нашего контейнера
-        found_date = None
-        current_loc = ""
+        # ОПРЕДЕЛЯЕМ ЦЕЛЕВОЙ ГОРОД ДЛЯ ПОИСКА
+        target_city = ""
+        if target_port == "DCT": target_city = "GDANSK"
+        elif target_port == "BCT": target_city = "GDYNIA"
+
+        final_date = None
+        final_loc = ""
+        status = "Wrong Port"
         
         bls = res_data.get("Data", {}).get("BillOfLadings", [])
         for bl in bls:
             for cont in bl.get("ContainersInfo", []):
                 if cont.get("ContainerNumber") == container:
-                    # Берем самый первый ивент (Order 5 в твоем примере)
                     events = cont.get("Events", [])
-                    if events:
-                        first_event = events[0]
-                        found_date = first_event.get("Date")
-                        current_loc = first_event.get("Location", "").upper()
+                    if not events: continue
+
+                    # 1. Сначала пытаемся найти событие именно в целевом порту (Гданьск/Гдыня)
+                    # Ищем самое свежее событие, связанное с портом
+                    port_event = None
+                    if target_city:
+                        for ev in events:
+                            loc = ev.get("Location", "").upper()
+                            if target_city in loc:
+                                port_event = ev
+                                status = "Discharged" # Если нашли порт в истории - это успех
+                                break
+                    
+                    # 2. Если порт нашли — берем данные из него
+                    if port_event:
+                        final_date = port_event.get("Date")
+                        final_loc = port_event.get("Location", "").upper()
+                    else:
+                        # 3. Если порт вообще не найден в истории — берем самое последнее событие (как и было)
+                        last_event = events[0]
+                        final_date = last_event.get("Date")
+                        final_loc = last_event.get("Location", "").upper()
+                        status = "Wrong Port"
                     break
-        
-        if not found_date:
+
+        if not final_date:
             return jsonify({"error": "No events"}), 404
 
-        # ЛОГИКА ПРОВЕРКИ ПОРТА
-        status = "Wrong Port"
-        # DCT -> GDANSK, BCT -> GDYNIA
-        if target_port == "DCT" and "GDANSK" in current_loc:
-            status = "OK"
-        elif target_port == "BCT" and "GDYNIA" in current_loc:
-            status = "OK"
-        elif not target_port:
-            status = "OK_NO_CHECK"
-
         return jsonify({
-            "date": found_date,
-            "location": current_loc,
+            "date": final_date,
+            "location": final_loc,
             "status": status
         })
 
