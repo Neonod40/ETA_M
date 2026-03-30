@@ -24,7 +24,6 @@ def get_msc_data():
 
     try:
         response = requests.post(url, json=payload, headers=headers, impersonate="chrome120", timeout=15)
-        
         if response.status_code != 200:
             return jsonify({"error": f"HTTP {response.status_code}"}), 502
 
@@ -35,14 +34,12 @@ def get_msc_data():
         if not res_data.get("IsSuccess"):
             return jsonify({"error": "Not found"}), 404
 
-        # ОПРЕДЕЛЯЕМ ЦЕЛЕВОЙ ГОРОД ДЛЯ ПОИСКА
-        target_city = ""
-        if target_port == "DCT": target_city = "GDANSK"
-        elif target_port == "BCT": target_city = "GDYNIA"
+        target_city = "GDANSK" if target_port == "DCT" else "GDYNIA" if target_port == "BCT" else ""
 
-        final_date = None
+        # Переменные для хранения найденных дат
+        d_date = None # Дата выгрузки (Discharged)
+        g_date = None # Дата вывоза (Gate Out)
         final_loc = ""
-        status = "Wrong Port"
         
         bls = res_data.get("Data", {}).get("BillOfLadings", [])
         for bl in bls:
@@ -51,35 +48,33 @@ def get_msc_data():
                     events = cont.get("Events", [])
                     if not events: continue
 
-                    # 1. Сначала пытаемся найти событие именно в целевом порту (Гданьск/Гдыня)
-                    # Ищем самое свежее событие, связанное с портом
-                    port_event = None
-                    if target_city:
-                        for ev in events:
-                            loc = ev.get("Location", "").upper()
-                            if target_city in loc:
-                                port_event = ev
-                                status = "Discharged" # Если нашли порт в истории - это успех
-                                break
-                    
-                    # 2. Если порт нашли — берем данные из него
-                    if port_event:
-                        final_date = port_event.get("Date")
-                        final_loc = port_event.get("Location", "").upper()
-                    else:
-                        # 3. Если порт вообще не найден в истории — берем самое последнее событие (как и было)
-                        last_event = events[0]
-                        final_date = last_event.get("Date")
-                        final_loc = last_event.get("Location", "").upper()
-                        status = "Wrong Port"
-                    break
+                    for ev in events:
+                        desc = ev.get("Description", "").upper()
+                        loc = ev.get("Location", "").upper()
+                        
+                        # Ищем выгрузку в целевом порту
+                        if "DISCHARGED FROM VESSEL" in desc and target_city in loc:
+                            d_date = ev.get("Date")
+                            final_loc = loc
+                        
+                        # Ищем вывоз (ЖД или Трак) из целевого порта или связанные с ним
+                        if any(x in desc for x in ["LOADED ON RAIL", "UNLOADED FROM RAIL", "GATE OUT", "TO CONSIGNEE"]):
+                            # Фиксируем дату вывоза (берем самое свежее из этих событий)
+                            if not g_date:
+                                g_date = ev.get("Date")
+                                if not final_loc: final_loc = loc
 
-        if not final_date:
-            return jsonify({"error": "No events"}), 404
+        # Логика формирования ответа
+        status = "In Transit"
+        # Если нашли выгрузку - статус Discharged
+        if d_date: status = "Discharged"
+        # Если нашли вывоз - статус Gate Out (приоритет для БОТа)
+        if g_date: status = "Gate Out"
 
         return jsonify({
-            "date": final_date,
-            "location": final_loc,
+            "date": g_date if g_date else d_date if d_date else events[0].get("Date"),
+            "discharged_date": d_date if d_date else "",
+            "location": final_loc if final_loc else events[0].get("Location", "").upper(),
             "status": status
         })
 
