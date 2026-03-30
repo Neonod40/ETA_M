@@ -40,11 +40,25 @@ def get_msc_data():
         g_date = None # Дата вывоза (Gate Out)
         e_date = None # Плановая дата (ETA)
         final_loc = ""
+        c_size = "40" # По умолчанию
+        c_type = "HC" # По умолчанию
         
         bls = res_data.get("Data", {}).get("BillOfLadings", [])
         for bl in bls:
             for cont in bl.get("ContainersInfo", []):
                 if cont.get("ContainerNumber") == container:
+                    
+                    # --- ОПРЕДЕЛЯЕМ РАЗМЕР И ТИП ---
+                    raw_type = str(cont.get("Type", "") or cont.get("EquipmentType", "")).upper()
+                    if "20" in raw_type: c_size = "20"
+                    elif "45" in raw_type: c_size = "45"
+                    else: c_size = "40"
+                    
+                    if "HIGH CUBE" in raw_type or "HC" in raw_type: c_type = "HC"
+                    elif "DRY" in raw_type or "VAN" in raw_type or "DV" in raw_type: c_type = "DV"
+                    elif "REEF" in raw_type or "RF" in raw_type: c_type = "RF"
+                    elif "OPEN" in raw_type or "OT" in raw_type: c_type = "OT"
+                    
                     events = cont.get("Events", [])
                     if not events: continue
 
@@ -80,10 +94,12 @@ def get_msc_data():
         bot_date = g_date if g_date else table_date
 
         return jsonify({
-            "date": table_date,        # <--- Это пойдет в Гугл Таблицу
-            "latest_date": bot_date,   # <--- Это пойдет в Бота
+            "date": table_date,
+            "latest_date": bot_date,
             "status": status,
-            "location": final_loc if final_loc else events[0].get("Location", "").upper()
+            "location": final_loc if final_loc else events[0].get("Location", "").upper(),
+            "size": c_size,
+            "type": c_type
         })
 
     except Exception as e:
