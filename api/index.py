@@ -36,9 +36,9 @@ def get_msc_data():
 
         target_city = "GDANSK" if target_port == "DCT" else "GDYNIA" if target_port == "BCT" else ""
 
-        # Переменные для хранения найденных дат
         d_date = None # Дата выгрузки (Discharged)
         g_date = None # Дата вывоза (Gate Out)
+        e_date = None # Плановая дата (ETA)
         final_loc = ""
         
         bls = res_data.get("Data", {}).get("BillOfLadings", [])
@@ -51,31 +51,39 @@ def get_msc_data():
                     for ev in events:
                         desc = ev.get("Description", "").upper()
                         loc = ev.get("Location", "").upper()
+                        curr_date = ev.get("Date")
                         
-                        # Ищем выгрузку в целевом порту
+                        # 1. ЕТА (Estimated)
+                        if "ESTIMATED TIME OF ARRIVAL" in desc and target_city in loc:
+                            e_date = curr_date
+                            if not final_loc: final_loc = loc
+                        
+                        # 2. ВЫГРУЗКА (Discharged)
                         if "DISCHARGED FROM VESSEL" in desc and target_city in loc:
-                            d_date = ev.get("Date")
+                            d_date = curr_date
                             final_loc = loc
                         
-                        # Ищем вывоз (ЖД или Трак) из целевого порта или связанные с ним
+                        # 3. ВЫВОЗ (Gate Out/Rail)
                         if any(x in desc for x in ["LOADED ON RAIL", "UNLOADED FROM RAIL", "GATE OUT", "TO CONSIGNEE"]):
-                            # Фиксируем дату вывоза (берем самое свежее из этих событий)
                             if not g_date:
-                                g_date = ev.get("Date")
-                                if not final_loc: final_loc = loc
+                                g_date = curr_date
 
-        # Логика формирования ответа
+        # ОПРЕДЕЛЯЕМ СТАТУС
         status = "In Transit"
-        # Если нашли выгрузку - статус Discharged
         if d_date: status = "Discharged"
-        # Если нашли вывоз - статус Gate Out (приоритет для БОТа)
         if g_date: status = "Gate Out"
 
+        # ДАТА ДЛЯ ТАБЛИЦЫ (Приоритет: Выгрузка > ЕТА)
+        table_date = d_date if d_date else e_date if e_date else events[0].get("Date")
+        
+        # ДАТА ДЛЯ БОТА (Приоритет: Вывоз > Выгрузка > ЕТА)
+        bot_date = g_date if g_date else table_date
+
         return jsonify({
-            "date": g_date if g_date else d_date if d_date else events[0].get("Date"),
-            "discharged_date": d_date if d_date else "",
-            "location": final_loc if final_loc else events[0].get("Location", "").upper(),
-            "status": status
+            "date": table_date,        # <--- Это пойдет в Гугл Таблицу
+            "latest_date": bot_date,   # <--- Это пойдет в Бота
+            "status": status,
+            "location": final_loc if final_loc else events[0].get("Location", "").upper()
         })
 
     except Exception as e:
