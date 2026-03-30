@@ -42,18 +42,15 @@ def get_msc_data():
         final_loc = ""
         c_size = "40" # По умолчанию
         c_type = "HC" # По умолчанию
-        target_cont_raw = {} # Сюда сохраним сырые данные для дебага
         
         bls = res_data.get("Data", {}).get("BillOfLadings", [])
         for bl in bls:
             for cont in bl.get("ContainersInfo", []):
                 if cont.get("ContainerNumber") == container:
                     
-                    # Сохраняем весь блок контейнера для дебага
-                    target_cont_raw = cont
+                    # --- ИЩЕМ В ПРАВИЛЬНОМ ПОЛЕ (ContainerType) ---
+                    raw_type = str(cont.get("ContainerType", "") or cont.get("Type", "") or cont.get("EquipmentType", "")).upper()
                     
-                    # --- ОПРЕДЕЛЯЕМ РАЗМЕР И ТИП ---
-                    raw_type = str(cont.get("Type", "") or cont.get("EquipmentType", "")).upper()
                     if "20" in raw_type: c_size = "20"
                     elif "45" in raw_type: c_size = "45"
                     else: c_size = "40"
@@ -103,8 +100,7 @@ def get_msc_data():
             "status": status,
             "location": final_loc if final_loc else (events[0].get("Location", "").upper() if events else ""),
             "size": c_size,
-            "type": c_type,
-            "debug_raw_data": target_cont_raw
+            "type": c_type
         })
 
     except Exception as e:
