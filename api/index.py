@@ -42,11 +42,15 @@ def get_msc_data():
         final_loc = ""
         c_size = "40" # По умолчанию
         c_type = "HC" # По умолчанию
+        target_cont_raw = {} # Сюда сохраним сырые данные для дебага
         
         bls = res_data.get("Data", {}).get("BillOfLadings", [])
         for bl in bls:
             for cont in bl.get("ContainersInfo", []):
                 if cont.get("ContainerNumber") == container:
+                    
+                    # Сохраняем весь блок контейнера для дебага
+                    target_cont_raw = cont
                     
                     # --- ОПРЕДЕЛЯЕМ РАЗМЕР И ТИП ---
                     raw_type = str(cont.get("Type", "") or cont.get("EquipmentType", "")).upper()
@@ -88,7 +92,7 @@ def get_msc_data():
         if g_date: status = "Gate Out"
 
         # ДАТА ДЛЯ ТАБЛИЦЫ (Приоритет: Выгрузка > ЕТА)
-        table_date = d_date if d_date else e_date if e_date else events[0].get("Date")
+        table_date = d_date if d_date else e_date if e_date else events[0].get("Date") if events else ""
         
         # ДАТА ДЛЯ БОТА (Приоритет: Вывоз > Выгрузка > ЕТА)
         bot_date = g_date if g_date else table_date
@@ -97,9 +101,10 @@ def get_msc_data():
             "date": table_date,
             "latest_date": bot_date,
             "status": status,
-            "location": final_loc if final_loc else events[0].get("Location", "").upper(),
+            "location": final_loc if final_loc else (events[0].get("Location", "").upper() if events else ""),
             "size": c_size,
-            "type": c_type
+            "type": c_type,
+            "debug_raw_data": target_cont_raw
         })
 
     except Exception as e:
